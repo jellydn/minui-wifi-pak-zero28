@@ -1,0 +1,80 @@
+---
+name: "beta-release"
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  attestations: write
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04-arm
+    if: github.actor == 'jellydn'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Create release
+        run: make clean build release
+
+      - name: Get Pak Name
+        id: pak-name
+        run: |
+          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          retention-days: 1
+
+      - name: Post Beta Download Link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_number="${{ github.event.pull_request.number }}"
+          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          pr_comment="## 🧪 Beta Release
+
+Build successful! Download the artifact to test on your device:
+
+⬇️ **Artifacts → [Wifi.pak.zip]($run_url)** (click the run link, then download from the Artifacts section)
+
+> ⏳ This artifact will be deleted after **30 minutes**.
+>
+> Extract the zip to \`/Tools/\$PLATFORM/Wifi.pak/\` on your SD card.
+>
+> ⚠️ Supported platforms: miyoomini, my282, my355, rg35xxplus, tg5040, zero28"
+
+          # Delete previous beta comment if exists
+          existing=$(gh api "/repos/${{ github.repository }}/issues/$pr_number/comments" \
+            --jq '.[] | select(.body | startswith("## 🧪 Beta Release")) | .id' | tail -1)
+          if [ -n "$existing" ]; then
+            gh api "/repos/${{ github.repository }}/issues/comments/$existing" -X DELETE
+          fi
+
+          gh pr comment "$pr_number" --body "$pr_comment"

@@ -1,86 +1,78 @@
 #!/bin/sh
 set -x
 BIN_DIR="$(dirname "$0")"
-PAK_DIR="$(dirname "$BIN_DIR")"
+. "$BIN_DIR/lib/platform.sh"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
 
-architecture=arm
-if uname -m | grep -q '64'; then
-    architecture=arm64
-fi
-
-export PATH="$PAK_DIR/bin/$architecture:$PAK_DIR/bin/$PLATFORM:$PAK_DIR/bin:$PATH"
-export LD_LIBRARY_PATH="$PAK_DIR/lib/$PLATFORM:$PAK_DIR/lib:$LD_LIBRARY_PATH"
+log_debug() { echo "[$(date '+%H:%M:%S')] $*"; }
+log_step()  { log_debug "STEP $*"; }
+log_ok()    { log_debug "  OK $*"; }
+log_fail()  { log_debug "  FAIL $*"; }
 
 main() {
-    if [ "$PLATFORM" = "tg3040" ] && [ -z "$DEVICE" ]; then
-        export DEVICE="brick"
-        export PLATFORM="tg5040"
+    log_step "service-off start (PLATFORM=$PLATFORM ARCH=$ARCHITECTURE)"
+
+    normalize_platform
+    log_ok "normalize_platform done (PLATFORM=$PLATFORM)"
+
+    log_step "has_system_json"
+    if has_system_json; then
+        log_ok "setting system.json wifi=0"
+        set_system_json 0
+    else
+        log_debug "no system.json support"
     fi
 
-    echo "Preparing to disable wifi..."
-    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ] || [ "$PLATFORM" = "tg5040" ]; then
-        SYSTEM_JSON_PATH="/mnt/UDISK/system.json"
-        if [ "$PLATFORM" = "miyoomini" ]; then
-            SYSTEM_JSON_PATH="/appconfigs/system.json"
-        elif [ "$PLATFORM" = "my282" ]; then
-            SYSTEM_JSON_PATH="/config/system.json"
-        elif [ "$PLATFORM" = "my355" ]; then
-            SYSTEM_JSON_PATH="/userdata/system.json"
-        fi
-
-        [ ! -f "$SYSTEM_JSON_PATH" ] && echo '{"wifi": 0}' >"$SYSTEM_JSON_PATH"
-        [ ! -s "$SYSTEM_JSON_PATH" ] && echo '{"wifi": 0}' >"$SYSTEM_JSON_PATH"
-
-        if [ -x /usr/trimui/bin/systemval ]; then
-            /usr/trimui/bin/systemval wifi 0
-        else
-            chmod +x "$PAK_DIR/bin/$architecture/jq"
-            jq '.wifi = 0' "$SYSTEM_JSON_PATH" >"/tmp/system.json.tmp"
-            mv "/tmp/system.json.tmp" "$SYSTEM_JSON_PATH"
-        fi
-    fi
-
+    log_step "stop wpa_supplicant"
     if pgrep wpa_supplicant; then
-        echo "Stopping wpa_supplicant..."
+        log_debug "stopping wpa_supplicant"
         /etc/init.d/wpa_supplicant stop || true
         systemctl stop wpa_supplicant || true
         killall -9 wpa_supplicant 2>/dev/null || true
+    else
+        log_debug "wpa_supplicant not running"
     fi
 
     if [ "$PLATFORM" = "miyoomini" ]; then
+        log_debug "miyoomini: stopping udhcpc"
         killall udhcpc 2>/dev/null || true
     fi
 
-    status="$(cat /sys/class/net/wlan0/flags)"
+    status="$(cat /sys/class/net/wlan0/flags 2>/dev/null)" || status=""
+    log_debug "wlan0 flags=$status"
     if [ "$status" = "0x1003" ]; then
-        echo "Marking wlan0 interface down..."
+        log_debug "bringing wlan0 down"
         ifconfig wlan0 down || true
     fi
 
     if command -v rfkill >/dev/null 2>&1; then
         if [ ! -f /sys/class/rfkill/rfkill0/state ]; then
-            echo "Blocking wireless..."
+            log_debug "blocking wifi via rfkill"
             rfkill block wifi 2>/dev/null || true
+        else
+            log_debug "rfkill0 state exists, skipping"
         fi
     fi
 
     if [ -f /customer/app/axp_test ]; then
+        log_debug "calling axp_test wifioff"
         /customer/app/axp_test wifioff
     fi
 
-    template_file="$PAK_DIR/res/wpa_supplicant.conf.tmpl"
-    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ]; then
-        template_file="$PAK_DIR/res/wpa_supplicant.conf.$PLATFORM.tmpl"
-    fi
+    log_step "reset wpa_supplicant.conf"
+    template_file="$(get_wpa_template_path)"
+    log_debug "template=$template_file"
     cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
-    if [ "$PLATFORM" = "rg35xxplus" ]; then
+
+    if has_netplan; then
+        log_debug "has_netplan: cleaning up netplan"
         rm -f /etc/netplan/01-netcfg.yaml
         netplan apply
         systemctl stop systemd-networkd || true
     fi
 
+    log_ok "service-off complete"
     return 0
 }
 

@@ -12,14 +12,10 @@ echo "$0" "$@"
 cd "$PAK_DIR" || exit 1
 mkdir -p "$USERDATA_PATH/$PAK_NAME"
 
-architecture=arm
-if uname -m | grep -q '64'; then
-    architecture=arm64
-fi
+BIN_DIR="$PAK_DIR/bin"
+. "$BIN_DIR/lib/platform.sh"
 
 export HOME="$USERDATA_PATH/$PAK_NAME"
-export LD_LIBRARY_PATH="$PAK_DIR/lib/$PLATFORM:$PAK_DIR/lib:$LD_LIBRARY_PATH"
-export PATH="$PAK_DIR/bin/$architecture:$PAK_DIR/bin/$PLATFORM:$PAK_DIR/bin:$PATH"
 
 get_ssid_and_ip() {
     enabled="$(cat /sys/class/net/wlan0/operstate)"
@@ -30,7 +26,7 @@ get_ssid_and_ip() {
     ssid=""
     ip_address=""
 
-    for i in $(seq 1 5); do
+    for _ in $(seq 1 5); do
         if [ "$PLATFORM" = "my355" ]; then
             ssid="$(wpa_cli -i wlan0 status | grep ssid= | grep -v bssid= | cut -d'=' -f2)"
             ip_address="$(wpa_cli -i wlan0 status | grep ip_address= | cut -d'=' -f2)"
@@ -112,7 +108,7 @@ networks_screen() {
 
     if [ "$PLATFORM" = "my355" ]; then
         wpa_cli -i wlan0 scan
-        for i in $(seq 1 "$DELAY"); do
+        for _ in $(seq 1 "$DELAY"); do
             wpa_cli -i wlan0 scan_results | grep -v "ssid" | cut -f 5 | sort -u >>"$minui_list_file"
             if [ -s "$minui_list_file" ]; then
                 break
@@ -120,7 +116,7 @@ networks_screen() {
             sleep 1
         done
     else
-        for i in $(seq 1 "$DELAY"); do
+        for _ in $(seq 1 "$DELAY"); do
             iw dev wlan0 scan | grep SSID: | cut -d':' -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | sort -u >>"$minui_list_file"
             if [ -s "$minui_list_file" ]; then
                 break
@@ -244,20 +240,25 @@ will_start_on_boot() {
 
 write_config() {
     ENABLING_WIFI="${1:-true}"
+    log_step "write_config ENABLING_WIFI=$ENABLING_WIFI SDCARD_PATH=$SDCARD_PATH"
 
-    echo "Generating wpa_supplicant.conf"
-    template_file="$PAK_DIR/res/wpa_supplicant.conf.tmpl"
-    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ]; then
-        template_file="$PAK_DIR/res/wpa_supplicant.conf.$PLATFORM.tmpl"
-    fi
+    log_debug "generating wpa_supplicant.conf from template"
+    template_file="$(get_wpa_template_path)"
+    log_debug "template=$template_file"
 
-    cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
-    if [ "$PLATFORM" = "rg35xxplus" ]; then
-        echo "Generating netplan.yaml"
+    cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf" || {
+        log_fail "cp template failed"
+        return 1
+    }
+    log_ok "template copied"
+
+    if has_netplan; then
+        log_debug "copying netplan.yaml.tmpl"
         cp "$PAK_DIR/res/netplan.yaml.tmpl" "$PAK_DIR/res/netplan.yaml"
     fi
 
     if [ ! -f "$SDCARD_PATH/wifi.txt" ] && [ -f "$PAK_DIR/wifi.txt" ]; then
+        log_debug "migrating wifi.txt from pak dir to SD root"
         mv "$PAK_DIR/wifi.txt" "$SDCARD_PATH/wifi.txt"
     fi
 
@@ -265,35 +266,21 @@ write_config() {
     sed -i '/^$/d' "$SDCARD_PATH/wifi.txt"
     # exit non-zero if no wifi.txt file or empty
     if [ ! -s "$SDCARD_PATH/wifi.txt" ]; then
-        echo "No credentials found in wifi.txt"
+        log_debug "No credentials found in wifi.txt"
     fi
 
     if [ "$ENABLING_WIFI" = "true" ]; then
         has_passwords=false
         priority_used=false
         echo "" >>"$SDCARD_PATH/wifi.txt"
+        parsed_ssid=""
+        parsed_psk=""
         while read -r line; do
-            line="$(echo "$line" | xargs)"
-            if [ -z "$line" ]; then
+            if ! parse_wifi_line "$line"; then
                 continue
             fi
-
-            # skip if line starts with a comment
-            if echo "$line" | grep -q "^#"; then
-                continue
-            fi
-
-            # skip if line is not in the format "ssid:psk"
-            if ! echo "$line" | grep -q ":"; then
-                continue
-            fi
-
-            ssid="$(echo "$line" | cut -d: -f1 | xargs)"
-            psk="$(echo "$line" | cut -d: -f2- | xargs)"
-            if [ -z "$ssid" ]; then
-                continue
-            fi
-
+            ssid="$parsed_ssid"
+            psk="$parsed_psk"
             has_passwords=true
 
             {
@@ -310,7 +297,7 @@ write_config() {
                 fi
                 echo "}"
             } >>"$PAK_DIR/res/wpa_supplicant.conf"
-            if [ "$PLATFORM" = "rg35xxplus" ]; then
+            if has_netplan; then
                 {
                     echo "                \"$ssid\":"
                     echo "                    password: \"$psk\""
@@ -319,25 +306,15 @@ write_config() {
         done <"$SDCARD_PATH/wifi.txt"
     fi
 
-    if [ "$PLATFORM" = "miyoomini" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /appconfigs/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "my282" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /config/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "my355" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /userdata/cfg/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "rg35xxplus" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wpa_supplicant/wpa_supplicant.conf
+    if ! install_wpa_config "$PAK_DIR/res/wpa_supplicant.conf"; then
+        show_message "$PLATFORM is not a supported platform" 2
+        return 1
+    fi
+    if has_netplan; then
         cp "$PAK_DIR/res/netplan.yaml" /etc/netplan/01-netcfg.yaml
         if [ "$has_passwords" = false ]; then
             rm -f /etc/netplan/01-netcfg.yaml
         fi
-    elif [ "$PLATFORM" = "tg5040" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-    else
-        show_message "$PLATFORM is not a supported platform" 2
-        return 1
     fi
 }
 
@@ -347,71 +324,65 @@ has_credentials() {
     fi
 
     while read -r line; do
-        line="$(echo "$line" | xargs)"
-        if [ -z "$line" ]; then
-            continue
+        if parse_wifi_line "$line"; then
+            return 0
         fi
-
-        # skip if line starts with a comment
-        if echo "$line" | grep -q "^#"; then
-            continue
-        fi
-
-        # skip if line is not in the format "ssid:psk"
-        if ! echo "$line" | grep -q ":"; then
-            continue
-        fi
-
-        ssid="$(echo "$line" | cut -d: -f1 | xargs)"
-        if [ -z "$ssid" ]; then
-            continue
-        fi
-
-        return 0
     done <"$SDCARD_PATH/wifi.txt"
 
     return 1
 }
 
 wifi_off() {
-    echo "Preparing to toggle wifi off"
+    log_step "wifi_off"
 
     if ! write_config "false"; then
+        log_fail "write_config returned error"
         return 1
     fi
+    log_ok "write_config done"
 
     if ! service-off; then
+        log_fail "service-off returned error"
         return 1
     fi
+    log_ok "service-off done"
     return 0
 }
 
 wifi_on() {
-    echo "Preparing to toggle wifi on"
+    log_step "wifi_on"
 
     if ! write_config "true"; then
+        log_fail "write_config returned error"
         return 1
     fi
+    log_ok "write_config done"
 
     if ! service-on; then
+        log_fail "service-on returned error"
         return 1
     fi
+    log_ok "service-on done"
 
     if ! has_credentials; then
+        log_debug "No credentials found in wifi.txt"
         show_message "No credentials found in wifi.txt" 2
         return 0
     fi
+    log_ok "has_credentials true"
 
     DELAY=30
-    for i in $(seq 1 "$DELAY"); do
+    for _ in $(seq 1 "$DELAY"); do
         STATUS=$(cat "/sys/class/net/wlan0/operstate")
         if [ "$STATUS" = "up" ]; then
+            log_ok "wlan0 operstate=up"
             break
         fi
         sleep 1
     done
 
     if [ "$STATUS" != "up" ]; then
+        log_fail "wlan0 not up after $DELAY seconds"
         return 1
     fi
 }
@@ -532,43 +503,61 @@ cleanup() {
 }
 
 main() {
+    log_step "START main (PLATFORM=$PLATFORM DEVICE=${DEVICE:-} ARCH=$ARCHITECTURE)"
+    log_debug "  PATH=$PATH"
+    log_debug "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+    log_debug "  HOME=$HOME"
+    log_debug "  SDCARD_PATH=$SDCARD_PATH"
+    log_debug "  USERDATA_PATH=$USERDATA_PATH"
+
     echo "1" >/tmp/stay_awake
     trap "cleanup" EXIT INT TERM HUP QUIT
 
-    if [ "$PLATFORM" = "tg3040" ] && [ -z "$DEVICE" ]; then
-        export DEVICE="brick"
-        export PLATFORM="tg5040"
-    fi
+    log_step "normalize_platform"
+    normalize_platform
+    log_ok "PLATFORM=$PLATFORM DEVICE=${DEVICE:-}"
 
     if [ "$PLATFORM" = "miyoomini" ] && [ -z "$DEVICE" ]; then
         export DEVICE="miyoomini"
         if [ -f /customer/app/axp_test ]; then
             export DEVICE="miyoominiplus"
         fi
+        log_ok "DEVICE=$DEVICE"
     fi
 
+    log_step "check prerequisites"
     if ! command -v minui-keyboard >/dev/null 2>&1; then
+        log_fail "minui-keyboard not found in PATH"
         show_message "minui-keyboard not found" 2
         return 1
     fi
+    log_ok "minui-keyboard at $(command -v minui-keyboard)"
 
     if ! command -v minui-list >/dev/null 2>&1; then
+        log_fail "minui-list not found in PATH"
         show_message "minui-list not found" 2
         return 1
     fi
+    log_ok "minui-list at $(command -v minui-list)"
 
     if ! command -v minui-presenter >/dev/null 2>&1; then
+        log_fail "minui-presenter not found in PATH"
         show_message "minui-presenter not found" 2
         return 1
     fi
+    log_ok "minui-presenter at $(command -v minui-presenter)"
 
-    allowed_platforms="miyoomini my282 my355 tg5040 rg35xxplus"
+    log_step "check allowed_platforms"
+    allowed_platforms="miyoomini my282 my355 tg5040 rg35xxplus zero28"
     if ! echo "$allowed_platforms" | grep -q "$PLATFORM"; then
+        log_fail "$PLATFORM not in allowed_platforms"
         show_message "$PLATFORM is not a supported platform" 2
         return 1
     fi
+    log_ok "$PLATFORM is supported"
 
     if [ "$PLATFORM" = "miyoomini" ]; then
+        log_step "check miyoomini-specific"
         if [ ! -f /customer/app/axp_test ]; then
             show_message "Wifi not supported on non-Plus version of the Miyoo Mini" 2
             return 1
@@ -577,30 +566,44 @@ main() {
         if ! grep -c 8188fu /proc/modules; then
             insmod "$PAK_DIR/res/miyoomini/8188fu.ko"
         fi
+        log_ok "miyoomini checks passed"
     fi
 
     if [ "$PLATFORM" = "rg35xxplus" ]; then
+        log_step "check rg35xxplus model"
         RGXX_MODEL="$(strings /mnt/vendor/bin/dmenu.bin | grep ^RG)"
         if [ "$RGXX_MODEL" = "RG28xx" ]; then
             show_message "Wifi not supported on RG28XX" 2
             return 1
         fi
+        log_ok "rg35xxplus model=$RGXX_MODEL"
     fi
 
-    chmod +x "$PAK_DIR/bin/$architecture/jq"
+    log_step "chmod binaries"
+    chmod +x "$PAK_DIR/bin/$ARCHITECTURE/jq"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-keyboard"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-list"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-presenter"
+    log_ok "binaries ready"
 
+    LOG_FIRST_SCREEN=true
     while true; do
+        if [ "$LOG_FIRST_SCREEN" = true ]; then
+            log_step "main_screen (first call)"
+            LOG_FIRST_SCREEN=false
+        fi
         main_screen
         exit_code=$?
+        log_debug "main_screen exit_code=$exit_code"
         # exit codes: 2 = back button, 3 = menu button
         if [ "$exit_code" -ne 0 ]; then
+            log_step "main_screen returned exit_code=$exit_code, exiting main loop"
             break
         fi
 
+        log_step "processing selection"
         output="$(cat /tmp/minui-output)"
+        log_debug "minui-output raw: $output"
         selected_index="$(echo "$output" | jq -r '.selected')"
         selection="$(echo "$output" | jq -r ".settings[$selected_index].name")"
 
@@ -660,23 +663,27 @@ main() {
             fi
         elif echo "$selection" | grep -q "^Refresh connection$"; then
             show_message "Disconnecting from wifi" forever
+            log_step "Refresh connection: wifi_off"
             if ! wifi_off; then
                 show_message "Failed to stop wifi" 2
                 return 1
             fi
 
             show_message "Updating wifi config" forever
+            log_step "Refresh connection: write_config"
             if ! write_config "true"; then
                 show_message "Failed to write config" 2
             fi
 
             show_message "Refreshing connection" forever
+            log_step "Refresh connection: service-on"
             if ! service-on; then
                 show_message "Failed to enable wifi" 2
                 continue
             fi
         fi
     done
+    log_step "main loop ended (exit_code=$exit_code)"
 }
 
 main "$@"
