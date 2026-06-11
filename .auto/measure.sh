@@ -1,45 +1,50 @@
 #!/bin/bash
 set -euo pipefail
 
-# measure.sh — validates that generated wpa_supplicant.conf has properly escaped values
-# Primary metric: config_unescaped_values — unescaped quote/backslash positions in config generation
+# measure.sh — verifies release build integrity for zero28
 
 PAK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PAK_DIR"
 
-config_unescaped_values=0
+errors=0
 
-# ============================================================
-# Check: does launch.sh escape special chars in SSID/PSK?
-# ============================================================
-
-if [ -f launch.sh ]; then
-    # The wpa config generation writes ssid="<value>" and psk="<value>"
-    # If the value contains " or \, those must be escaped as \" and \\
-    # Check: does the ssid=$parsed_ssid / psk=$parsed_psk get escaped before embedding?
-
-    # Scan for the config generation block: echo '    ssid="$ssid"' and echo '    psk="$psk"'
-    # These write values directly without sed escaping
-    if grep -nE 'echo.*ssid="\$ssid"' launch.sh >/dev/null 2>&1; then
-        echo "BUG: SSID embedded directly in wpa_supplicant.conf without escaping quotes/backslashes"
-        config_unescaped_values=$((config_unescaped_values + 1))
-    fi
-    if grep -nE 'echo.*psk="\$psk"' launch.sh >/dev/null 2>&1; then
-        echo "BUG: PSK embedded directly in wpa_supplicant.conf without escaping quotes/backslashes"
-        config_unescaped_values=$((config_unescaped_values + 1))
-    fi
-    if grep -nE 'password:.*\$psk' launch.sh >/dev/null 2>&1; then
-        echo "BUG: PSK embedded directly in netplan.yaml without escaping"
-        config_unescaped_values=$((config_unescaped_values + 1))
-    fi
+# Check that platform.sh is tracked by git (required for release zip)
+echo "=== Check 1: bin/lib/platform.sh tracked in git ==="
+if git ls-files --error-unmatch bin/lib/platform.sh >/dev/null 2>&1; then
+  echo "OK: platform.sh is tracked"
+else
+  echo "FAIL: platform.sh not tracked (will be missing from release zip)"
+  errors=$((errors + 1))
 fi
 
-echo "METRIC config_unescaped_values=$config_unescaped_values"
+# Check that service scripts all source platform.sh
+echo "=== Check 2: All scripts source platform.sh ==="
+for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled; do
+  if grep -q '\. ".*lib/platform.sh"' "$f"; then
+    echo "OK: $f sources platform.sh"
+  else
+    echo "FAIL: $f does not source platform.sh"
+    errors=$((errors + 1))
+  fi
+done
 
-if [ "$config_unescaped_values" -gt 0 ]; then
-    echo "FAILED: $config_unescaped_values unescaped config values"
-    exit 1
+# Check shellcheck
+echo "=== Check 3: shellcheck ==="
+sc=0
+for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled bin/lib/platform.sh; do
+  count=$(shellcheck --severity=warning "$f" 2>/dev/null | grep -c "^In " || true)
+  sc=$((sc + count))
+done
+echo "Shellcheck warnings: $sc"
+if [ "$sc" -gt 0 ]; then
+  errors=$((errors + sc))
 fi
 
-echo "PASSED: All config values properly escaped"
+echo ""
+echo "METRIC release_errors=$errors"
+if [ "$errors" -gt 0 ]; then
+  echo "FAILED: $errors issues found"
+  exit 1
+fi
+echo "PASSED: Release integrity verified"
 exit 0
