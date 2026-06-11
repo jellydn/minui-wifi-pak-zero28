@@ -12,6 +12,7 @@ permissions:
   attestations: write
   id-token: write
   contents: write
+  pull-requests: write
 
 jobs:
   build:
@@ -48,49 +49,31 @@ jobs:
         with:
           name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
           path: "dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
+          retention-days: 1
 
-  validate:
-    name: validate
-    runs-on: ubuntu-24.04
-    needs: build
-    if: github.actor == 'jellydn'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get Pak Name
-        id: pak-name
+      - name: Post Beta Download Link
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "PAK_NAME=$(jq -r .name pak.json)" >> $GITHUB_OUTPUT
+          pr_number="${{ github.event.pull_request.number }}"
+          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          pr_comment="## 🧪 Beta Release
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: "${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
-          path: "dist"
+Build successful! Download the artifact to test on your device:
 
-      - name: Validate Artifact
-        run: |
-          set -euo pipefail
-          zipfile="dist/${{ steps.pak-name.outputs.PAK_NAME }}.pak.zip"
-          if [ ! -f "$zipfile" ]; then
-            echo "Artifact does not exist"
-            exit 1
+⬇️ **Artifacts → [Wifi.pak.zip]($run_url)** (click the run link, then download from the Artifacts section)
+
+> ⏳ This artifact will be deleted after **30 minutes**.
+>
+> Extract the zip to \`/Tools/\$PLATFORM/Wifi.pak/\` on your SD card.
+>
+> ⚠️ Supported platforms: miyoomini, my282, my355, rg35xxplus, tg5040, zero28"
+
+          # Delete previous beta comment if exists
+          existing=$(gh api "/repos/${{ github.repository }}/issues/$pr_number/comments" \
+            --jq '.[] | select(.body | startswith("## 🧪 Beta Release")) | .id' | tail -1)
+          if [ -n "$existing" ]; then
+            gh api "/repos/${{ github.repository }}/issues/comments/$existing" -X DELETE
           fi
-          echo "Artifact size: $(stat --printf='%s' "$zipfile") bytes"
 
-          # Verify expected files are in the zip
-          unzip -l "$zipfile" | grep "zero28" || {
-            echo "ERROR: zero28 files not found in zip"
-            exit 1
-          }
-
-          unzip -l "$zipfile" | grep "launch.sh" || {
-            echo "ERROR: launch.sh not found in zip"
-            exit 1
-          }
-
-          echo "Artifact validated successfully"
+          gh pr comment "$pr_number" --body "$pr_comment"
