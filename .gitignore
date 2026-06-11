@@ -9,5 +9,9 @@ bin/*
 !bin/miyoomini/iw
 !bin/zero28
 !bin/zero28/*
+!bin/arm64
+!bin/arm64/wpa_supplicant
+!bin/arm64/wpa_cli
+!bin/arm64/busybox
 res/fonts/*
 !res/fonts/.gitkeep

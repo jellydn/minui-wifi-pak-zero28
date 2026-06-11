@@ -55,12 +55,11 @@ main() {
 
         /customer/app/wpa_cli -i wlan0 reconnect
         iw dev wlan0 set power_save off
-    elif [ "$PLATFORM" = "tg5040" ] || [ "$PLATFORM" = "zero28" ]; then
-        log_debug "tg5040/zero28 path"
+    elif [ "$PLATFORM" = "tg5040" ]; then
+        log_debug "tg5040 path"
         killall -15 wpa_supplicant || true
         killall -15 udhcpc || true
         ifconfig wlan0 up || true
-        # Ensure socket directory exists (may not exist on fresh installs)
         mkdir -p /etc/wifi/sockets
         log_debug "starting wpa_supplicant..."
         wpa_supplicant -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets >/tmp/wpa_supplicant.log 2>&1
@@ -84,6 +83,60 @@ main() {
         fi
         log_debug "starting udhcpc..."
         udhcpc -i wlan0 -n &
+        log_ok "udhcpc started"
+    elif [ "$PLATFORM" = "zero28" ]; then
+        log_debug "zero28 path (bundled binaries)"
+        killall -15 wpa_supplicant || true
+        killall -15 udhcpc || true
+
+        # Moss-zero28 is minimal — wlan0 may not exist yet.
+        # Try to load the RTL8189ES kernel module if wlan0 is missing
+        if [ ! -d /sys/class/net/wlan0 ]; then
+            log_debug "wlan0 not found, trying to load WiFi module"
+            for mod in 8189es rtl8189es rtl8xxxu 8723ds 8821cs rtl8821cs; do
+                if modprobe "$mod" 2>/dev/null; then
+                    log_ok "loaded module: $mod"
+                    break
+                fi
+                if [ -f "$PAK_DIR/res/zero28/${mod}.ko" ]; then
+                    insmod "$PAK_DIR/res/zero28/${mod}.ko" 2>/dev/null && log_ok "insmod $mod.ko" && break
+                fi
+            done
+            sleep 2
+        fi
+
+        # Use bundled busybox for ifconfig/udhcpc (not on Moss-zero28)
+        BUSYBOX="$PAK_DIR/bin/$ARCHITECTURE/busybox"
+        "$BUSYBOX" ifconfig wlan0 up 2>/dev/null || ifconfig wlan0 up 2>/dev/null || true
+        mkdir -p /etc/wifi/sockets
+
+        # Use bundled wpa_supplicant
+        WPA_BIN="$PAK_DIR/bin/$ARCHITECTURE/wpa_supplicant"
+        log_debug "using bundled wpa_supplicant at $WPA_BIN"
+
+        if [ ! -x "$WPA_BIN" ]; then
+            log_fail "bundled wpa_supplicant not found at $WPA_BIN"
+            echo "wpa_supplicant not found"
+            return 1
+        fi
+
+        "$WPA_BIN" -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets >/tmp/wpa_supplicant.log 2>&1
+        WPA_EXIT=$?
+        log_debug "wpa_supplicant exit=$WPA_EXIT"
+        cat /tmp/wpa_supplicant.log
+        rm -f /tmp/wpa_supplicant.log
+
+        if pgrep wpa_supplicant; then
+            log_ok "wpa_supplicant running (pid $(pgrep wpa_supplicant))"
+        else
+            log_fail "wpa_supplicant not running"
+            echo "Failed to start wpa_supplicant"
+            return 1
+        fi
+
+        # Use bundled busybox for udhcpc
+        log_debug "starting udhcpc via busybox..."
+        "$BUSYBOX" udhcpc -i wlan0 -n 2>/dev/null || udhcpc -i wlan0 -n 2>/dev/null || true
         log_ok "udhcpc started"
     elif [ "$PLATFORM" = "my282" ]; then
         log_debug "my282 path"
