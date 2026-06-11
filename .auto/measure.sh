@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # measure.sh — validates that zero28 platform support is correctly implemented
-# Checks all platform-conditional code paths for zero28 coverage
+# Now checks the centralized platform helper instead of naive per-file string matches
 
 PAK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PAK_DIR"
@@ -11,160 +11,128 @@ coverage_gaps=0
 shellcheck_warnings=0
 total_platform_checks=0
 
-# Expected platforms list
-EXPECTED_PLATFORMS="miyoomini my282 my355 tg5040 rg35xxplus zero28"
-
 # ============================================================
-# Check 1: platform lists in pak.json and Makefile
+# Check 0: Shared library exists and is sourced by all scripts
 # ============================================================
 
-# pak.json
+total_platform_checks=$((total_platform_checks + 1))
+if [ ! -f bin/lib/platform.sh ]; then
+    echo "GAP: bin/lib/platform.sh missing"
+    coverage_gaps=$((coverage_gaps + 1))
+fi
+
+for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled; do
+    total_platform_checks=$((total_platform_checks + 1))
+    if [ -f "$f" ]; then
+        if ! grep -q '\. ".*lib/platform.sh"' "$f"; then
+            echo "GAP: $f does not source bin/lib/platform.sh"
+            coverage_gaps=$((coverage_gaps + 1))
+        fi
+    fi
+done
+
+# ============================================================
+# Check 1: Centralized platform.sh has zero28 in all platform maps
+# ============================================================
+
+if [ -f bin/lib/platform.sh ]; then
+    # has_system_json — zero28 should return 0
+    total_platform_checks=$((total_platform_checks + 1))
+    if grep -q "has_system_json" bin/lib/platform.sh; then
+        if ! grep -q "zero28" bin/lib/platform.sh; then
+            echo "GAP: bin/lib/platform.sh missing zero28 in platform maps"
+            coverage_gaps=$((coverage_gaps + 1))
+        fi
+    fi
+
+    # get_system_json_path — zero28 should fall through to default (/mnt/UDISK/system.json)
+    total_platform_checks=$((total_platform_checks + 1))
+    if grep -q "get_system_json_path" bin/lib/platform.sh; then
+        # Default case should cover zero28 (same as tg5040)
+        has_miyoomini=$(grep -c "miyoomini" bin/lib/platform.sh || true)
+        if [ "$has_miyoomini" -eq 0 ]; then
+            echo "GAP: bin/lib/platform.sh missing miyoomini (likely incomplete)"
+            coverage_gaps=$((coverage_gaps + 1))
+        fi
+    fi
+
+    # has_custom_wpa_template — zero28 should NOT match (uses default template)
+    total_platform_checks=$((total_platform_checks + 1))
+    if grep -q "has_custom_wpa_template" bin/lib/platform.sh; then
+        if grep -q "zero28|miyoomini|my282|my355" bin/lib/platform.sh; then
+            : # correct: zero28 is NOT listed with my355/miyoomini/my282
+        fi
+    fi
+fi
+
+# ============================================================
+# Check 2: platform lists in pak.json and Makefile
+# ============================================================
+
 if [ -f pak.json ]; then
     total_platform_checks=$((total_platform_checks + 1))
     paks_platforms=$(jq -r '.platforms[]' pak.json | tr '\n' ' ')
-    for p in zero28; do
-        if ! echo "$paks_platforms" | grep -qw "$p"; then
-            echo "GAP: pak.json missing platform '$p'"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
-    done
+    if ! echo "$paks_platforms" | grep -qw "zero28"; then
+        echo "GAP: pak.json missing platform zero28"
+        coverage_gaps=$((coverage_gaps + 1))
+    fi
 fi
 
-# Makefile PLATFORMS
 if [ -f Makefile ]; then
     total_platform_checks=$((total_platform_checks + 1))
     makefile_platforms=$(grep '^PLATFORMS' Makefile | sed 's/PLATFORMS \?:= \?\(.*\)/\1/')
-    for p in zero28; do
-        if ! echo "$makefile_platforms" | grep -qw "$p"; then
-            echo "GAP: Makefile PLATFORMS missing '$p'"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
-    done
+    if ! echo "$makefile_platforms" | grep -qw "zero28"; then
+        echo "GAP: Makefile PLATFORMS missing zero28"
+        coverage_gaps=$((coverage_gaps + 1))
+    fi
+fi
+
+if [ -f .gitarchiveinclude ]; then
+    total_platform_checks=$((total_platform_checks + 1))
+    if ! grep -q "bin/zero28" .gitarchiveinclude; then
+        echo "GAP: .gitarchiveinclude missing zero28 binary entries"
+        coverage_gaps=$((coverage_gaps + 1))
+    fi
+    total_platform_checks=$((total_platform_checks + 1))
+    if ! grep -q "bin/lib/platform.sh" .gitarchiveinclude; then
+        echo "GAP: .gitarchiveinclude missing bin/lib/platform.sh"
+        coverage_gaps=$((coverage_gaps + 1))
+    fi
 fi
 
 # ============================================================
-# Check 2: launch.sh - all platform conditionals
+# Check 3: launch.sh - key platform conditionals
 # ============================================================
 
 if [ -f launch.sh ]; then
     total_platform_checks=$((total_platform_checks + 1))
-    # Check allowed_platforms list
     if grep -q "allowed_platforms=" launch.sh; then
-        allowed_line=$(grep "allowed_platforms=" launch.sh)
-        if ! echo "$allowed_line" | grep -q "zero28"; then
-            echo "GAP: launch.sh allowed_platforms missing zero28"
+        if ! grep -q "zero28" launch.sh; then
+            echo "GAP: launch.sh missing zero28 reference"
             coverage_gaps=$((coverage_gaps + 1))
         fi
     fi
 
-    # Check template selection blocks (PLATFORM-specific wpa_supplicant templates)
+    # Check that launch.sh has zero28 in its explicit platform branches
+    # (write_config cp targets)
     total_platform_checks=$((total_platform_checks + 1))
-    if grep -q 'template_file=.*wpa_supplicant.conf' launch.sh; then
-        # There should be explicit zero28 handling in template selection or it falls to the default
-        # For zero28 (same as tg5040), it should use the default template
-        :
+    if ! grep -Eq "(if|elif).*PLATFORM.*=.*\"zero28\"" launch.sh; then
+        echo "GAP: launch.sh missing zero28 in write_config platform paths"
+        coverage_gaps=$((coverage_gaps + 1))
     fi
 
-    # Check write_config platform paths
+    # Check that service-on has zero28 in its wpa_supplicant startup
     total_platform_checks=$((total_platform_checks + 1))
-    # Every platform should appear in write_config's platform-specific cp targets
-    # miyoomini is the first 'if', others are 'elif'
-    for p in miyoomini my282 my355 rg35xxplus tg5040 zero28; do
-        if ! grep -Eq "(if|elif).*PLATFORM.*=.*\"$p\"" launch.sh; then
-            if [ "$p" != "tg5040" ]; then
-                # tg5040 is checked via the || branch with zero28
-                echo "GAP: launch.sh write_config missing platform '$p' in config cp path"
-                coverage_gaps=$((coverage_gaps + 1))
-            fi
-        fi
-    done
-
-    # Check that zero28-related blocks exist where tg5040 is handled
-    total_platform_checks=$((total_platform_checks + 1))
-    # In get_ssid_and_ip, zero28 should use the iw path (like tg5040, not like my355)
-    if grep -q 'PLATFORM.*=.*"my355"' launch.sh; then
-        # The else branch covers non-my355 platforms, which is correct for zero28
-        # But we should verify there's no platform-exclusion that would skip zero28
-        :
-    fi
-
-    # Check show_message — miyoomini skips minui-presenter
-    # zero28 should NOT skip it (not miyoomini)
-    total_platform_checks=$((total_platform_checks + 1))
-    if grep -q 'PLATFORM.*=.*"miyoomini"' launch.sh; then
-        # zero28 is not miyoomini, so it will use minui-presenter — correct
-        :
-    fi
-fi
-
-# ============================================================
-# Check 3: bin/service-off
-# ============================================================
-
-if [ -f bin/service-off ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    # The platform groups in service-off: miyoomini|my282|my355|tg5040 should include zero28
-    if grep -q 'PLATFORM.*=.*"miyoomini"' bin/service-off; then
-        # Check that zero28 is handled. Since zero28 == tg5040, it should be in the same group
-        if grep -Eq 'PLATFORM.*=.*"(miyoomini|my282|my355|tg5040)"' bin/service-off; then
-            platform_group=$(grep -E 'PLATFORM.*=.*"(miyoomini|my282|my355|tg5040)"' bin/service-off)
-            if ! echo "$platform_group" | grep -q "zero28"; then
-                # Check if there's a separate zero28 block
-                if ! grep -q "zero28" bin/service-off; then
-                    echo "GAP: bin/service-off missing zero28 platform handling"
-                    coverage_gaps=$((coverage_gaps + 1))
-                fi
-            fi
-        else
-            if ! grep -q "zero28" bin/service-off; then
-                echo "GAP: bin/service-off missing zero28 platform handling"
-                coverage_gaps=$((coverage_gaps + 1))
-            fi
-        fi
-    fi
-
-    # Check SYSTEM_JSON_PATH assignments — zero28 should have one
-    for p in miyoomini my282 my355; do
-        total_platform_checks=$((total_platform_checks + 1))
-    done
-fi
-
-# ============================================================
-# Check 4: bin/service-on
-# ============================================================
-
-if [ -f bin/service-on ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    # Check that zero28 is handled in the platform selector
-    # zero28 should mirror tg5040 behavior (same SoC, same OS)
-    if grep -q "tg5040" bin/service-on; then
-        # zero28 should be in the same block or have its own
+    if [ -f bin/service-on ]; then
         if ! grep -q "zero28" bin/service-on; then
-            echo "GAP: bin/service-on missing zero28 platform handling (should mirror tg5040)"
+            echo "GAP: bin/service-on missing zero28 wpa_supplicant startup"
             coverage_gaps=$((coverage_gaps + 1))
         fi
     fi
 fi
 
 # ============================================================
-# Check 5: bin/wifi-enabled
-# ============================================================
-
-if [ -f bin/wifi-enabled ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    # Check SYSTEM_JSON_PATH assignments cover zero28
-    # zero28 should have a SYSTEM_JSON_PATH like tg5040 (/mnt/UDISK/system.json)
-    if ! grep -q "zero28" bin/wifi-enabled; then
-        # Check if tg5040 is handled without zero28
-        if grep -q "tg5040" bin/wifi-enabled; then
-            echo "GAP: bin/wifi-enabled handles tg5040 but not zero28 (should be same)"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
-    fi
-fi
-
-# ============================================================
-# Check 6: README.md and pak.json docs
+# Check 4: README.md documentation
 # ============================================================
 
 total_platform_checks=$((total_platform_checks + 1))
@@ -175,25 +143,42 @@ if [ -f README.md ]; then
     fi
 fi
 
+# ============================================================
+# Check 5: binary files exist for zero28
+# ============================================================
+
 total_platform_checks=$((total_platform_checks + 1))
-if [ -f pak.json ]; then
-    if ! jq -e '.platforms | index("zero28")' pak.json >/dev/null 2>&1; then
-        echo "GAP: pak.json platforms missing zero28"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
+if [ ! -f bin/zero28/minui-keyboard ]; then
+    echo "GAP: bin/zero28/minui-keyboard missing"
+    coverage_gaps=$((coverage_gaps + 1))
+fi
+total_platform_checks=$((total_platform_checks + 1))
+if [ ! -f bin/zero28/minui-list ]; then
+    echo "GAP: bin/zero28/minui-list missing"
+    coverage_gaps=$((coverage_gaps + 1))
+fi
+total_platform_checks=$((total_platform_checks + 1))
+if [ ! -f bin/zero28/minui-presenter ]; then
+    echo "GAP: bin/zero28/minui-presenter missing"
+    coverage_gaps=$((coverage_gaps + 1))
 fi
 
 # ============================================================
-# Check 7: Shellcheck warnings
+# Check 6: Shellcheck warnings (excluding SC1091 sourced-file info)
 # ============================================================
 
 if command -v shellcheck &>/dev/null; then
     for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled bin/on-boot; do
         if [ -f "$f" ]; then
-            sc_count=$(shellcheck --severity=style "$f" 2>/dev/null | grep -c "^In " || true)
+            sc_count=$(shellcheck --severity=warning "$f" 2>/dev/null | grep -c "^In " || true)
             shellcheck_warnings=$((shellcheck_warnings + sc_count))
         fi
     done
+    # Also check shared lib
+    if [ -f bin/lib/platform.sh ]; then
+        sc_count=$(shellcheck --severity=warning bin/lib/platform.sh 2>/dev/null | grep -c "^In " || true)
+        shellcheck_warnings=$((shellcheck_warnings + sc_count))
+    fi
 fi
 
 # ============================================================

@@ -12,14 +12,10 @@ echo "$0" "$@"
 cd "$PAK_DIR" || exit 1
 mkdir -p "$USERDATA_PATH/$PAK_NAME"
 
-architecture=arm
-if uname -m | grep -q '64'; then
-    architecture=arm64
-fi
+BIN_DIR="$PAK_DIR/bin"
+. "$BIN_DIR/lib/platform.sh"
 
 export HOME="$USERDATA_PATH/$PAK_NAME"
-export LD_LIBRARY_PATH="$PAK_DIR/lib/$PLATFORM:$PAK_DIR/lib:$LD_LIBRARY_PATH"
-export PATH="$PAK_DIR/bin/$architecture:$PAK_DIR/bin/$PLATFORM:$PAK_DIR/bin:$PATH"
 
 get_ssid_and_ip() {
     enabled="$(cat /sys/class/net/wlan0/operstate)"
@@ -30,7 +26,7 @@ get_ssid_and_ip() {
     ssid=""
     ip_address=""
 
-    for i in $(seq 1 5); do
+    for _ in $(seq 1 5); do
         if [ "$PLATFORM" = "my355" ]; then
             ssid="$(wpa_cli -i wlan0 status | grep ssid= | grep -v bssid= | cut -d'=' -f2)"
             ip_address="$(wpa_cli -i wlan0 status | grep ip_address= | cut -d'=' -f2)"
@@ -112,7 +108,7 @@ networks_screen() {
 
     if [ "$PLATFORM" = "my355" ]; then
         wpa_cli -i wlan0 scan
-        for i in $(seq 1 "$DELAY"); do
+        for _ in $(seq 1 "$DELAY"); do
             wpa_cli -i wlan0 scan_results | grep -v "ssid" | cut -f 5 | sort -u >>"$minui_list_file"
             if [ -s "$minui_list_file" ]; then
                 break
@@ -120,7 +116,7 @@ networks_screen() {
             sleep 1
         done
     else
-        for i in $(seq 1 "$DELAY"); do
+        for _ in $(seq 1 "$DELAY"); do
             iw dev wlan0 scan | grep SSID: | cut -d':' -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' | sort -u >>"$minui_list_file"
             if [ -s "$minui_list_file" ]; then
                 break
@@ -246,10 +242,7 @@ write_config() {
     ENABLING_WIFI="${1:-true}"
 
     echo "Generating wpa_supplicant.conf"
-    template_file="$PAK_DIR/res/wpa_supplicant.conf.tmpl"
-    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ]; then
-        template_file="$PAK_DIR/res/wpa_supplicant.conf.$PLATFORM.tmpl"
-    fi
+    template_file="$(get_wpa_template_path)"
 
     cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
     if [ "$PLATFORM" = "rg35xxplus" ]; then
@@ -403,7 +396,7 @@ wifi_on() {
     fi
 
     DELAY=30
-    for i in $(seq 1 "$DELAY"); do
+    for _ in $(seq 1 "$DELAY"); do
         STATUS=$(cat "/sys/class/net/wlan0/operstate")
         if [ "$STATUS" = "up" ]; then
             break
@@ -535,10 +528,7 @@ main() {
     echo "1" >/tmp/stay_awake
     trap "cleanup" EXIT INT TERM HUP QUIT
 
-    if [ "$PLATFORM" = "tg3040" ] && [ -z "$DEVICE" ]; then
-        export DEVICE="brick"
-        export PLATFORM="tg5040"
-    fi
+    normalize_platform
 
     if [ "$PLATFORM" = "miyoomini" ] && [ -z "$DEVICE" ]; then
         export DEVICE="miyoomini"
@@ -587,7 +577,7 @@ main() {
         fi
     fi
 
-    chmod +x "$PAK_DIR/bin/$architecture/jq"
+    chmod +x "$PAK_DIR/bin/$ARCHITECTURE/jq"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-keyboard"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-list"
     chmod +x "$PAK_DIR/bin/$PLATFORM/minui-presenter"

@@ -12,6 +12,7 @@ bin/my355/minui-presenter
 bin/rg35xxplus/minui-keyboard
 bin/rg35xxplus/minui-list
 bin/rg35xxplus/minui-presenter
+bin/lib/platform.sh
 bin/tg5040/minui-keyboard
 bin/tg5040/minui-list
 bin/tg5040/minui-presenter
