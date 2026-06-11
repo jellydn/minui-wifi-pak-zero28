@@ -127,6 +127,12 @@ install_wpa_config() {
         return 1
     fi
     for dest in $dests; do
+        # Ensure parent directory exists (rootfs may not have /etc/wifi/ pre-created)
+        dest_dir="$(dirname "$dest")"
+        if [ ! -d "$dest_dir" ]; then
+            log_debug "creating directory $dest_dir"
+            mkdir -p "$dest_dir"
+        fi
         log_debug "cp $src -> $dest"
         cp "$src" "$dest" || {
             log_fail "cp failed: $src -> $dest"
