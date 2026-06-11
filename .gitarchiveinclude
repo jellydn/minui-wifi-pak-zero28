@@ -15,3 +15,6 @@ bin/rg35xxplus/minui-presenter
 bin/tg5040/minui-keyboard
 bin/tg5040/minui-list
 bin/tg5040/minui-presenter
+bin/zero28/minui-keyboard
+bin/zero28/minui-list
+bin/zero28/minui-presenter
