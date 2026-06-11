@@ -113,12 +113,13 @@ if [ -f launch.sh ]; then
         fi
     fi
 
-    # Check that launch.sh has zero28 in its explicit platform branches
-    # (write_config cp targets)
+    # Check that platform.sh's centralized get_wpa_conf_path has zero28
     total_platform_checks=$((total_platform_checks + 1))
-    if ! grep -Eq "(if|elif).*PLATFORM.*=.*\"zero28\"" launch.sh; then
-        echo "GAP: launch.sh missing zero28 in write_config platform paths"
-        coverage_gaps=$((coverage_gaps + 1))
+    if [ -f bin/lib/platform.sh ]; then
+        if ! grep -Eq "tg5040\\|zero28" bin/lib/platform.sh; then
+            echo "GAP: bin/lib/platform.sh get_wpa_conf_path missing zero28"
+            coverage_gaps=$((coverage_gaps + 1))
+        fi
     fi
 
     # Check that service-on has zero28 in its wpa_supplicant startup

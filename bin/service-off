@@ -43,7 +43,7 @@ main() {
 
     template_file="$(get_wpa_template_path)"
     cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
-    if [ "$PLATFORM" = "rg35xxplus" ]; then
+    if has_netplan; then
         rm -f /etc/netplan/01-netcfg.yaml
         netplan apply
         systemctl stop systemd-networkd || true

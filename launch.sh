@@ -245,7 +245,7 @@ write_config() {
     template_file="$(get_wpa_template_path)"
 
     cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
-    if [ "$PLATFORM" = "rg35xxplus" ]; then
+    if has_netplan; then
         echo "Generating netplan.yaml"
         cp "$PAK_DIR/res/netplan.yaml.tmpl" "$PAK_DIR/res/netplan.yaml"
     fi
@@ -303,7 +303,7 @@ write_config() {
                 fi
                 echo "}"
             } >>"$PAK_DIR/res/wpa_supplicant.conf"
-            if [ "$PLATFORM" = "rg35xxplus" ]; then
+            if has_netplan; then
                 {
                     echo "                \"$ssid\":"
                     echo "                    password: \"$psk\""
@@ -312,25 +312,15 @@ write_config() {
         done <"$SDCARD_PATH/wifi.txt"
     fi
 
-    if [ "$PLATFORM" = "miyoomini" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /appconfigs/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "my282" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /config/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "my355" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /userdata/cfg/wpa_supplicant.conf
-    elif [ "$PLATFORM" = "rg35xxplus" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wpa_supplicant/wpa_supplicant.conf
+    if ! install_wpa_config "$PAK_DIR/res/wpa_supplicant.conf"; then
+        show_message "$PLATFORM is not a supported platform" 2
+        return 1
+    fi
+    if has_netplan; then
         cp "$PAK_DIR/res/netplan.yaml" /etc/netplan/01-netcfg.yaml
         if [ "$has_passwords" = false ]; then
             rm -f /etc/netplan/01-netcfg.yaml
         fi
-    elif [ "$PLATFORM" = "tg5040" ] || [ "$PLATFORM" = "zero28" ]; then
-        cp "$PAK_DIR/res/wpa_supplicant.conf" /etc/wifi/wpa_supplicant.conf
-    else
-        show_message "$PLATFORM is not a supported platform" 2
-        return 1
     fi
 }
 
