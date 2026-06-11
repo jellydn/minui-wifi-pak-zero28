@@ -3,6 +3,15 @@ bin/arm64/jq
 bin/arm64/wpa_supplicant
 bin/arm64/wpa_cli
 bin/arm64/busybox
+lib/zero28/libcrypto.so.3
+lib/zero28/libdbus-1.so.3
+lib/zero28/libdbus-1.so.3.32.4
+lib/zero28/libnl-3.so.200
+lib/zero28/libnl-genl-3.so.200
+lib/zero28/libnl-route-3.so.200
+lib/zero28/libpcsclite.so.1
+lib/zero28/libpcsclite.so.1.0.0
+lib/zero28/libssl.so.3
 bin/miyoomini/minui-keyboard
 bin/miyoomini/minui-list
 bin/miyoomini/minui-presenter
