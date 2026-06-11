@@ -56,11 +56,12 @@ Add `zero28` platform support to the minui-wifi-pak so it works on the MagicX Mi
   - Downloaded `minui-keyboard-zero28`, `minui-list-zero28`, `minui-presenter-zero28` from upstream releases
   - Updated `README.md` with device documentation
 - ✅ Architecture cleanup (shellcheck: 1→0, code duplication eliminated)
-  - Created `bin/lib/platform.sh` with: `normalize_platform`, `has_system_json`, `get_system_json_path`, `set_system_json`, `get_system_json`, `has_custom_wpa_template`, `get_wpa_template_path`, `get_wpa_conf_path`, `install_wpa_config`, `has_netplan`
+  - Created `bin/lib/platform.sh` with: `normalize_platform`, `has_system_json`, `get_system_json_path`, `set_system_json`, `get_system_json`, `has_custom_wpa_template`, `get_wpa_template_path`, `get_wpa_conf_path`, `install_wpa_config`, `has_netplan`, `parse_wifi_line`
   - Refactored `bin/service-off`, `bin/service-on`, `bin/wifi-enabled` to source shared library
   - Refactored `launch.sh` to use shared platform helpers
   - Fixed 4 unused loop variable warnings (`for _ in` instead of `for i in`)
   - Netplan-specific logic extracted to `has_netplan()` helper
+  - Credential parsing extracted to `parse_wifi_line()` — 24 lines eliminated from launch.sh
 - Architecture rationale: Zero 28 uses the same Allwinner A133P SoC and Tina Linux as tg5040 (Trimui Smart Pro/Brick), with RTL8189ES WiFi via nl80211. All system paths are identical.
 
 ## Saturated Metrics — Next Ideas
