@@ -43,4 +43,14 @@ Add `zero28` platform support to the minui-wifi-pak so it works on the MagicX Mi
 - WiFi paths should mirror tg5040: `/etc/wifi/wpa_supplicant.conf`, standard `iw`/`wpa_supplicant`/`udhcpc`
 
 ## What's Been Tried
-- N/A — initial implementation
+- ✅ Initial implementation complete (coverage_gaps: 9→0)
+  - Added `zero28` to `pak.json`, `Makefile`, `.gitarchiveinclude`
+  - Added `zero28` to `launch.sh`:
+    - `allowed_platforms` list
+    - `write_config()` — grouped with `tg5040` for `/etc/wifi/wpa_supplicant.conf` path
+  - Added `zero28` to `bin/service-off` — grouped with tg5040/miyoomini/my282/my355 for system.json management
+  - Added `zero28` to `bin/service-on` — mirrors tg5040: wpa_supplicant -D nl80211 with /etc/wifi/sockets control interface
+  - `bin/wifi-enabled` — default `/mnt/UDISK/system.json` path works correctly (same as tg5040)
+  - Downloaded `minui-keyboard-zero28`, `minui-list-zero28`, `minui-presenter-zero28` from upstream releases
+  - Updated `README.md` with device documentation
+- Architecture rationale: Zero 28 uses the same Allwinner A133P SoC and Tina Linux as tg5040 (Trimui Smart Pro/Brick), with RTL8189ES WiFi via nl80211. All system paths are identical.
