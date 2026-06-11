@@ -5,12 +5,18 @@ BIN_DIR="$(dirname "$0")"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
 
+log_debug() { echo "[$(date '+%H:%M:%S')] $*"; }
+
 main() {
+    log_debug "wifi-enabled check (PLATFORM=$PLATFORM)"
+
     normalize_platform
 
     if has_system_json; then
         wifi_enabled="$(get_system_json)"
+        log_debug "system.json wifi=$wifi_enabled"
         if [ "$wifi_enabled" != "1" ]; then
+            log_debug "wifi not enabled in system.json"
             return 1
         fi
     fi
@@ -18,19 +24,27 @@ main() {
     if command -v rfkill >/dev/null 2>&1; then
         wifi_status="$(rfkill list wifi 2>/dev/null || true)"
         if echo "$wifi_status" | grep -q "blocked: yes"; then
+            log_debug "wifi blocked by rfkill"
             return 1
         fi
     fi
 
-    if ! pgrep wpa_supplicant; then
+    if pgrep wpa_supplicant; then
+        log_debug "wpa_supplicant running"
+    else
+        log_debug "wpa_supplicant not running"
         return 1
     fi
 
     # check if the device is on
-    if [ "$(cat /sys/class/net/wlan0/flags 2>/dev/null)" != "0x1003" ]; then
+    flags="$(cat /sys/class/net/wlan0/flags 2>/dev/null)" || flags=""
+    log_debug "wlan0 flags=$flags"
+    if [ "$flags" != "0x1003" ]; then
+        log_debug "wlan0 not up (flags=$flags)"
         return 1
     fi
 
+    log_debug "wifi is enabled"
     return 0
 }
 

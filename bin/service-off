@@ -5,50 +5,74 @@ BIN_DIR="$(dirname "$0")"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
 
-main() {
-    normalize_platform
+log_debug() { echo "[$(date '+%H:%M:%S')] $*"; }
+log_step()  { log_debug "STEP $*"; }
+log_ok()    { log_debug "  OK $*"; }
+log_fail()  { log_debug "  FAIL $*"; }
 
-    echo "Preparing to disable wifi..."
+main() {
+    log_step "service-off start (PLATFORM=$PLATFORM ARCH=$ARCHITECTURE)"
+
+    normalize_platform
+    log_ok "normalize_platform done (PLATFORM=$PLATFORM)"
+
+    log_step "has_system_json"
     if has_system_json; then
+        log_ok "setting system.json wifi=0"
         set_system_json 0
+    else
+        log_debug "no system.json support"
     fi
 
+    log_step "stop wpa_supplicant"
     if pgrep wpa_supplicant; then
-        echo "Stopping wpa_supplicant..."
+        log_debug "stopping wpa_supplicant"
         /etc/init.d/wpa_supplicant stop || true
         systemctl stop wpa_supplicant || true
         killall -9 wpa_supplicant 2>/dev/null || true
+    else
+        log_debug "wpa_supplicant not running"
     fi
 
     if [ "$PLATFORM" = "miyoomini" ]; then
+        log_debug "miyoomini: stopping udhcpc"
         killall udhcpc 2>/dev/null || true
     fi
 
-    status="$(cat /sys/class/net/wlan0/flags 2>/dev/null)"
+    status="$(cat /sys/class/net/wlan0/flags 2>/dev/null)" || status=""
+    log_debug "wlan0 flags=$status"
     if [ "$status" = "0x1003" ]; then
-        echo "Marking wlan0 interface down..."
+        log_debug "bringing wlan0 down"
         ifconfig wlan0 down || true
     fi
 
     if command -v rfkill >/dev/null 2>&1; then
         if [ ! -f /sys/class/rfkill/rfkill0/state ]; then
-            echo "Blocking wireless..."
+            log_debug "blocking wifi via rfkill"
             rfkill block wifi 2>/dev/null || true
+        else
+            log_debug "rfkill0 state exists, skipping"
         fi
     fi
 
     if [ -f /customer/app/axp_test ]; then
+        log_debug "calling axp_test wifioff"
         /customer/app/axp_test wifioff
     fi
 
+    log_step "reset wpa_supplicant.conf"
     template_file="$(get_wpa_template_path)"
+    log_debug "template=$template_file"
     cp "$template_file" "$PAK_DIR/res/wpa_supplicant.conf"
+
     if has_netplan; then
+        log_debug "has_netplan: cleaning up netplan"
         rm -f /etc/netplan/01-netcfg.yaml
         netplan apply
         systemctl stop systemd-networkd || true
     fi
 
+    log_ok "service-off complete"
     return 0
 }
 

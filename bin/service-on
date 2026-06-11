@@ -5,21 +5,36 @@ BIN_DIR="$(dirname "$0")"
 PAK_NAME="$(basename "$PAK_DIR")"
 PAK_NAME="${PAK_NAME%.*}"
 
+log_debug() { echo "[$(date '+%H:%M:%S')] $*"; }
+log_step()  { log_debug "STEP $*"; }
+log_ok()    { log_debug "  OK $*"; }
+log_fail()  { log_debug "  FAIL $*"; }
+
 main() {
+    log_step "service-on start (PLATFORM=$PLATFORM ARCH=$ARCHITECTURE)"
+
     normalize_platform
+    log_ok "normalize_platform done (PLATFORM=$PLATFORM)"
 
-    echo "Preparing to enable wifi..."
+    log_step "has_system_json"
     if has_system_json; then
+        log_ok "setting system.json wifi=1"
         set_system_json 1
+    else
+        log_debug "no system.json support"
     fi
 
+    log_step "rfkill"
     if command -v rfkill >/dev/null 2>&1; then
-        echo "Unblocking wireless..."
+        log_debug "unblocking wifi"
         rfkill unblock wifi 2>/dev/null || true
+    else
+        log_debug "rfkill not found"
     fi
 
-    echo "Starting wpa_supplicant..."
+    log_step "wpa_supplicant startup for $PLATFORM"
     if [ "$PLATFORM" = "miyoomini" ]; then
+        log_debug "miyoomini path"
         killall wpa_supplicant || true
         killall udhcpc || true
         if ! grep -c 8188fu /proc/modules; then
@@ -41,48 +56,67 @@ main() {
         /customer/app/wpa_cli -i wlan0 reconnect
         iw dev wlan0 set power_save off
     elif [ "$PLATFORM" = "tg5040" ] || [ "$PLATFORM" = "zero28" ]; then
+        log_debug "tg5040/zero28 path"
         killall -15 wpa_supplicant || true
         killall -15 udhcpc || true
         ifconfig wlan0 up || true
-        wpa_supplicant -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets >/tmp/wpa_supplicant.log
+        log_debug "starting wpa_supplicant..."
+        wpa_supplicant -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets >/tmp/wpa_supplicant.log 2>&1
+        WPA_EXIT=$?
+        log_debug "wpa_supplicant exit=$WPA_EXIT"
         cat /tmp/wpa_supplicant.log
         if grep -q "Delete '/etc/wifi/sockets/wlan0' manually if it is not used anymore" /tmp/wpa_supplicant.log; then
+            log_debug "stale socket detected, cleaning up"
             killall -15 wpa_supplicant
             rm -f /etc/wifi/sockets/wlan0
             wpa_supplicant -B -D nl80211 -iwlan0 -c /etc/wifi/wpa_supplicant.conf -O /etc/wifi/sockets
         fi
         rm -f /tmp/wpa_supplicant.log
 
-        if ! pgrep wpa_supplicant; then
+        if pgrep wpa_supplicant; then
+            log_ok "wpa_supplicant running (pid $(pgrep wpa_supplicant))"
+        else
+            log_fail "wpa_supplicant not running"
             echo "Failed to start wpa_supplicant"
             return 1
         fi
+        log_debug "starting udhcpc..."
         udhcpc -i wlan0 -n &
+        log_ok "udhcpc started"
     elif [ "$PLATFORM" = "my282" ]; then
+        log_debug "my282 path"
         killall -9 wpa_supplicant || true
         killall -9 udhcpc || true
         ifconfig wlan0 up || true
         if ! /etc/init.d/wpa_supplicant start; then
-            echo "Failed to start wpa_supplicant via init.d"
+            log_fail "wpa_supplicant via init.d failed"
         fi
 
-        if ! pgrep wpa_supplicant; then
+        if pgrep wpa_supplicant; then
+            log_ok "wpa_supplicant running"
+        else
+            log_fail "wpa_supplicant not running"
             echo "Failed to start wpa_supplicant"
             return 1
         fi
         ( (udhcpc -i wlan0 -q &) &)
     elif [ "$PLATFORM" = "my355" ]; then
+        log_debug "my355 path"
         killall -9 wpa_supplicant || true
         killall -9 udhcpc || true
         ifconfig wlan0 up || true
         wpa_supplicant -B -D nl80211 -iwlan0 -c /userdata/cfg/wpa_supplicant.conf
 
-        if ! pgrep wpa_supplicant; then
+        if pgrep wpa_supplicant; then
+            log_ok "wpa_supplicant running"
+        else
+            log_fail "wpa_supplicant not running"
             echo "Failed to start wpa_supplicant"
             return 1
         fi
         ( (udhcpc -i wlan0 -q &) &)
     elif [ "$PLATFORM" = "rg35xxplus" ]; then
+        log_debug "rg35xxplus path"
         ip link set wlan0 up
         iw dev wlan0 set power_save off
 
@@ -90,9 +124,12 @@ main() {
         systemctl start systemd-networkd || true
         netplan apply
     else
+        log_fail "unsupported platform $PLATFORM"
         echo "$PLATFORM is not a supported platform for Wifi.pak"
         return 1
     fi
+
+    log_ok "service-on complete"
 }
 
 main "$@"
