@@ -7,6 +7,8 @@ Add `zero28` platform support to the minui-wifi-pak so it works on the MagicX Mi
 - **Primary**: coverage_gaps (count, lower is better) — number of platform-conditional code paths that don't handle `zero28`
 - **Secondary**: shellcheck_warnings (count), total_platform_checks (count)
 
+> ⚠️ Both metrics are saturated at zero. Further iterations must define a new primary metric or pivot to a different optimization target.
+
 ## How to Run
 `./.auto/measure.sh` — outputs `METRIC name=number` lines.
 
@@ -53,4 +55,17 @@ Add `zero28` platform support to the minui-wifi-pak so it works on the MagicX Mi
   - `bin/wifi-enabled` — default `/mnt/UDISK/system.json` path works correctly (same as tg5040)
   - Downloaded `minui-keyboard-zero28`, `minui-list-zero28`, `minui-presenter-zero28` from upstream releases
   - Updated `README.md` with device documentation
+- ✅ Architecture cleanup (shellcheck: 1→0, code duplication eliminated)
+  - Created `bin/lib/platform.sh` with: `normalize_platform`, `has_system_json`, `get_system_json_path`, `set_system_json`, `get_system_json`, `has_custom_wpa_template`, `get_wpa_template_path`, `get_wpa_conf_path`, `install_wpa_config`, `has_netplan`
+  - Refactored `bin/service-off`, `bin/service-on`, `bin/wifi-enabled` to source shared library
+  - Refactored `launch.sh` to use shared platform helpers
+  - Fixed 4 unused loop variable warnings (`for _ in` instead of `for i in`)
+  - Netplan-specific logic extracted to `has_netplan()` helper
 - Architecture rationale: Zero 28 uses the same Allwinner A133P SoC and Tina Linux as tg5040 (Trimui Smart Pro/Brick), with RTL8189ES WiFi via nl80211. All system paths are identical.
+
+## Saturated Metrics — Next Ideas
+Both proxy metrics (coverage_gaps=0, shellcheck_warnings=0) are at optimum. Future work needs a new primary metric:
+- 🧪 **Functional validation**: Test the pak on real Zero 28 hardware — this is the only way to catch runtime regressions
+- 🔌 **Extract wpa_supplicant startup block**: `bin/service-on` still has per-platform startup code (miyoomini uses /customer/app, tg5040/zero28 use wpa_supplicant directly, my282/my355 similar). Could extract `install_wpa_supplicant()` to platform.sh
+- 🤝 **Platform family concept**: Codify A133, Sigmastar, Anbernic families to make future additions even simpler
+- 📝 **No-use-effect review**: Not applicable (shell scripts), but the extracted pattern is clean
