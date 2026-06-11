@@ -265,28 +265,14 @@ write_config() {
         has_passwords=false
         priority_used=false
         echo "" >>"$SDCARD_PATH/wifi.txt"
+        parsed_ssid=""
+        parsed_psk=""
         while read -r line; do
-            line="$(echo "$line" | xargs)"
-            if [ -z "$line" ]; then
+            if ! parse_wifi_line "$line"; then
                 continue
             fi
-
-            # skip if line starts with a comment
-            if echo "$line" | grep -q "^#"; then
-                continue
-            fi
-
-            # skip if line is not in the format "ssid:psk"
-            if ! echo "$line" | grep -q ":"; then
-                continue
-            fi
-
-            ssid="$(echo "$line" | cut -d: -f1 | xargs)"
-            psk="$(echo "$line" | cut -d: -f2- | xargs)"
-            if [ -z "$ssid" ]; then
-                continue
-            fi
-
+            ssid="$parsed_ssid"
+            psk="$parsed_psk"
             has_passwords=true
 
             {
@@ -330,27 +316,9 @@ has_credentials() {
     fi
 
     while read -r line; do
-        line="$(echo "$line" | xargs)"
-        if [ -z "$line" ]; then
-            continue
+        if parse_wifi_line "$line"; then
+            return 0
         fi
-
-        # skip if line starts with a comment
-        if echo "$line" | grep -q "^#"; then
-            continue
-        fi
-
-        # skip if line is not in the format "ssid:psk"
-        if ! echo "$line" | grep -q ":"; then
-            continue
-        fi
-
-        ssid="$(echo "$line" | cut -d: -f1 | xargs)"
-        if [ -z "$ssid" ]; then
-            continue
-        fi
-
-        return 0
     done <"$SDCARD_PATH/wifi.txt"
 
     return 1

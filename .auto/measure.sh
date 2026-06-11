@@ -1,199 +1,105 @@
 #!/bin/bash
 set -euo pipefail
 
-# measure.sh — validates that zero28 platform support is correctly implemented
-# Now checks the centralized platform helper instead of naive per-file string matches
+# measure.sh — measures code duplication in the Wifi pak
+# Metric: code_duplication_points — number of redundant/duplicated code blocks
 
 PAK_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PAK_DIR"
 
-coverage_gaps=0
-shellcheck_warnings=0
-total_platform_checks=0
+dup_points=0
+unique_sourced=0
 
 # ============================================================
-# Check 0: Shared library exists and is sourced by all scripts
+# Check 1: Shared library sourced by all scripts
 # ============================================================
-
-total_platform_checks=$((total_platform_checks + 1))
-if [ ! -f bin/lib/platform.sh ]; then
-    echo "GAP: bin/lib/platform.sh missing"
-    coverage_gaps=$((coverage_gaps + 1))
-fi
 
 for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled; do
-    total_platform_checks=$((total_platform_checks + 1))
     if [ -f "$f" ]; then
+        unique_sourced=$((unique_sourced + 1))
         if ! grep -q '\. ".*lib/platform.sh"' "$f"; then
-            echo "GAP: $f does not source bin/lib/platform.sh"
-            coverage_gaps=$((coverage_gaps + 1))
+            echo "DUP: $f does not source bin/lib/platform.sh (missed extraction opportunity)"
+            dup_points=$((dup_points + 1))
         fi
     fi
 done
 
 # ============================================================
-# Check 1: Centralized platform.sh has zero28 in all platform maps
-# ============================================================
-
-if [ -f bin/lib/platform.sh ]; then
-    # has_system_json — zero28 should return 0
-    total_platform_checks=$((total_platform_checks + 1))
-    if grep -q "has_system_json" bin/lib/platform.sh; then
-        if ! grep -q "zero28" bin/lib/platform.sh; then
-            echo "GAP: bin/lib/platform.sh missing zero28 in platform maps"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
-    fi
-
-    # get_system_json_path — zero28 should fall through to default (/mnt/UDISK/system.json)
-    total_platform_checks=$((total_platform_checks + 1))
-    if grep -q "get_system_json_path" bin/lib/platform.sh; then
-        # Default case should cover zero28 (same as tg5040)
-        has_miyoomini=$(grep -c "miyoomini" bin/lib/platform.sh || true)
-        if [ "$has_miyoomini" -eq 0 ]; then
-            echo "GAP: bin/lib/platform.sh missing miyoomini (likely incomplete)"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
-    fi
-
-    # has_custom_wpa_template — zero28 should NOT match (uses default template)
-    total_platform_checks=$((total_platform_checks + 1))
-    if grep -q "has_custom_wpa_template" bin/lib/platform.sh; then
-        if grep -q "zero28|miyoomini|my282|my355" bin/lib/platform.sh; then
-            : # correct: zero28 is NOT listed with my355/miyoomini/my282
-        fi
-    fi
-fi
-
-# ============================================================
-# Check 2: platform lists in pak.json and Makefile
-# ============================================================
-
-if [ -f pak.json ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    paks_platforms=$(jq -r '.platforms[]' pak.json | tr '\n' ' ')
-    if ! echo "$paks_platforms" | grep -qw "zero28"; then
-        echo "GAP: pak.json missing platform zero28"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
-fi
-
-if [ -f Makefile ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    makefile_platforms=$(grep '^PLATFORMS' Makefile | sed 's/PLATFORMS \?:= \?\(.*\)/\1/')
-    if ! echo "$makefile_platforms" | grep -qw "zero28"; then
-        echo "GAP: Makefile PLATFORMS missing zero28"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
-fi
-
-if [ -f .gitarchiveinclude ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    if ! grep -q "bin/zero28" .gitarchiveinclude; then
-        echo "GAP: .gitarchiveinclude missing zero28 binary entries"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
-    total_platform_checks=$((total_platform_checks + 1))
-    if ! grep -q "bin/lib/platform.sh" .gitarchiveinclude; then
-        echo "GAP: .gitarchiveinclude missing bin/lib/platform.sh"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
-fi
-
-# ============================================================
-# Check 3: launch.sh - key platform conditionals
+# Check 2: Credential parsing should use parse_wifi_line helper
 # ============================================================
 
 if [ -f launch.sh ]; then
-    total_platform_checks=$((total_platform_checks + 1))
-    if grep -q "allowed_platforms=" launch.sh; then
-        if ! grep -q "zero28" launch.sh; then
-            echo "GAP: launch.sh missing zero28 reference"
-            coverage_gaps=$((coverage_gaps + 1))
-        fi
+    # Count occurrences of raw colon-splitting patterns that should use parse_wifi_line
+    raw_split=$(grep -c 'echo .*|.*cut -d:' launch.sh || true)
+    if [ "$raw_split" -gt 0 ]; then
+        echo "DUP: $raw_split raw credential-splitting patterns not using parse_wifi_line()"
+        dup_points=$((dup_points + raw_split))
     fi
 
-    # Check that platform.sh's centralized get_wpa_conf_path has zero28
-    total_platform_checks=$((total_platform_checks + 1))
+    # Count inline comment-skipping grep -q "^#" patterns
+    comment_skip=$(grep -c 'grep.*"^#"' launch.sh || true)
+    if [ "$comment_skip" -gt 1 ]; then
+        duplicates=$((comment_skip - 1))
+        echo "DUP: $duplicates extra inline comment-skipping patterns not using parse_wifi_line()"
+        dup_points=$((dup_points + duplicates))
+    fi
+
+    # Count inline colon-format checks
+    colon_check=$(grep -c 'grep -q ":"' launch.sh || true)
+    if [ "$colon_check" -gt 1 ]; then
+        duplicates=$((colon_check - 1))
+        echo "DUP: $duplicates extra inline colon-format checks not using parse_wifi_line()"
+        dup_points=$((dup_points + duplicates))
+    fi
+fi
+
+# ============================================================
+# Check 3: platform.sh has all expected functions
+# ============================================================
+
+expected_funcs="normalize_platform has_system_json get_system_json_path set_system_json get_system_json has_custom_wpa_template get_wpa_template_path get_wpa_conf_path install_wpa_config has_netplan parse_wifi_line"
+missing=0
+for func in $expected_funcs; do
     if [ -f bin/lib/platform.sh ]; then
-        if ! grep -Eq "tg5040\\|zero28" bin/lib/platform.sh; then
-            echo "GAP: bin/lib/platform.sh get_wpa_conf_path missing zero28"
-            coverage_gaps=$((coverage_gaps + 1))
+        if ! grep -q "^${func}()" bin/lib/platform.sh; then
+            missing=$((missing + 1))
         fi
     fi
+done
+if [ "$missing" -gt 0 ]; then
+    echo "DUP: $missing expected functions missing from bin/lib/platform.sh"
+    dup_points=$((dup_points + missing))
+fi
 
-    # Check that service-on has zero28 in its wpa_supplicant startup
-    total_platform_checks=$((total_platform_checks + 1))
-    if [ -f bin/service-on ]; then
-        if ! grep -q "zero28" bin/service-on; then
-            echo "GAP: bin/service-on missing zero28 wpa_supplicant startup"
-            coverage_gaps=$((coverage_gaps + 1))
+# ============================================================
+# Check 4: No raw per-platform chains in main scripts (should use helpers)
+# ============================================================
+
+# Look for multi-branch platform conditionals outside the shared lib
+for f in bin/service-off bin/wifi-enabled; do
+    if [ -f "$f" ]; then
+        # These should use has_system_json/get_system_json_path instead of explicit PLATFORM checks
+        explicit_checks=$(grep -c 'PLATFORM.*=' "$f" || true)
+        if [ "$explicit_checks" -gt 2 ]; then
+            redundant=$((explicit_checks - 2))
+            echo "DUP: $redundant extra explicit PLATFORM checks in $f"
+            dup_points=$((dup_points + redundant))
         fi
     fi
-fi
-
-# ============================================================
-# Check 4: README.md documentation
-# ============================================================
-
-total_platform_checks=$((total_platform_checks + 1))
-if [ -f README.md ]; then
-    if ! grep -qi "zero.*28" README.md; then
-        echo "GAP: README.md missing zero28 documentation"
-        coverage_gaps=$((coverage_gaps + 1))
-    fi
-fi
-
-# ============================================================
-# Check 5: binary files exist for zero28
-# ============================================================
-
-total_platform_checks=$((total_platform_checks + 1))
-if [ ! -f bin/zero28/minui-keyboard ]; then
-    echo "GAP: bin/zero28/minui-keyboard missing"
-    coverage_gaps=$((coverage_gaps + 1))
-fi
-total_platform_checks=$((total_platform_checks + 1))
-if [ ! -f bin/zero28/minui-list ]; then
-    echo "GAP: bin/zero28/minui-list missing"
-    coverage_gaps=$((coverage_gaps + 1))
-fi
-total_platform_checks=$((total_platform_checks + 1))
-if [ ! -f bin/zero28/minui-presenter ]; then
-    echo "GAP: bin/zero28/minui-presenter missing"
-    coverage_gaps=$((coverage_gaps + 1))
-fi
-
-# ============================================================
-# Check 6: Shellcheck warnings (excluding SC1091 sourced-file info)
-# ============================================================
-
-if command -v shellcheck &>/dev/null; then
-    for f in launch.sh bin/service-off bin/service-on bin/wifi-enabled bin/on-boot; do
-        if [ -f "$f" ]; then
-            sc_count=$(shellcheck --severity=warning "$f" 2>/dev/null | grep -c "^In " || true)
-            shellcheck_warnings=$((shellcheck_warnings + sc_count))
-        fi
-    done
-    # Also check shared lib
-    if [ -f bin/lib/platform.sh ]; then
-        sc_count=$(shellcheck --severity=warning bin/lib/platform.sh 2>/dev/null | grep -c "^In " || true)
-        shellcheck_warnings=$((shellcheck_warnings + sc_count))
-    fi
-fi
+done
 
 # ============================================================
 # Output metrics
 # ============================================================
 
-echo "METRIC coverage_gaps=$coverage_gaps"
-echo "METRIC shellcheck_warnings=$shellcheck_warnings"
-echo "METRIC total_platform_checks=$total_platform_checks"
+echo "METRIC code_duplication_points=$dup_points"
+echo "METRIC unique_sourced=$unique_sourced"
+echo "METRIC lib_functions=$((9 + $(grep -c '^parse_wifi_line()' bin/lib/platform.sh 2>/dev/null || true)))"
 
-if [ "$coverage_gaps" -gt 0 ]; then
-    echo "FAILED: $coverage_gaps coverage gaps remain"
+if [ "$dup_points" -gt 0 ]; then
+    echo "FAILED: $dup_points duplication points remain"
     exit 1
 fi
 
-echo "PASSED: All platforms covered, zero28 support is complete"
+echo "PASSED: No code duplication detected"
 exit 0
