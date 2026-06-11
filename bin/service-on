@@ -20,7 +20,7 @@ main() {
     fi
 
     echo "Preparing to enable wifi..."
-    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ] || [ "$PLATFORM" = "tg5040" ]; then
+    if [ "$PLATFORM" = "miyoomini" ] || [ "$PLATFORM" = "my282" ] || [ "$PLATFORM" = "my355" ] || [ "$PLATFORM" = "tg5040" ] || [ "$PLATFORM" = "zero28" ]; then
         SYSTEM_JSON_PATH="/mnt/UDISK/system.json"
         if [ "$PLATFORM" = "miyoomini" ]; then
             SYSTEM_JSON_PATH="/appconfigs/system.json"
@@ -68,7 +68,7 @@ main() {
 
         /customer/app/wpa_cli -i wlan0 reconnect
         iw dev wlan0 set power_save off
-    elif [ "$PLATFORM" = "tg5040" ]; then
+    elif [ "$PLATFORM" = "tg5040" ] || [ "$PLATFORM" = "zero28" ]; then
         killall -15 wpa_supplicant || true
         killall -15 udhcpc || true
         ifconfig wlan0 up || true

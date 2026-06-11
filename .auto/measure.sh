@@ -68,10 +68,11 @@ if [ -f launch.sh ]; then
     # Check write_config platform paths
     total_platform_checks=$((total_platform_checks + 1))
     # Every platform should appear in write_config's platform-specific cp targets
+    # miyoomini is the first 'if', others are 'elif'
     for p in miyoomini my282 my355 rg35xxplus tg5040 zero28; do
-        if ! grep -Eq "elif.*PLATFORM.*=.*\"$p\"" launch.sh; then
+        if ! grep -Eq "(if|elif).*PLATFORM.*=.*\"$p\"" launch.sh; then
             if [ "$p" != "tg5040" ]; then
-                # tg5040 is checked via the else branch
+                # tg5040 is checked via the || branch with zero28
                 echo "GAP: launch.sh write_config missing platform '$p' in config cp path"
                 coverage_gaps=$((coverage_gaps + 1))
             fi
